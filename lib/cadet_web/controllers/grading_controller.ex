@@ -4,14 +4,26 @@ defmodule CadetWeb.GradingController do
 
   alias Cadet.Assessments
 
-  def index(conn, %{"group" => group}) when group in ["true", "false"] do
+  def index(conn, %{"pageNo" => page_no, "group" => group})
+      when is_ecto_id(page_no) and group in ["true", "false"] do
     user = conn.assigns[:current_user]
-
+    
     group = String.to_atom(group)
+    page_no = 
+    if String.to_integer(page_no) < 1 do
+      1
+    else
+      String.to_integer(page_no)
+    end
 
-    case Assessments.all_submissions_by_grader(user, group) do
-      {:ok, submissions} ->
-        render(conn, "index.json", submissions: submissions)
+    case Assessments.all_submissions_by_grader(user, page_no, group) do
+      {:ok, {submissions, metadata}} ->
+        render(
+          conn,
+          "index.json",
+          submissions: submissions,
+          metadata: metadata
+        )
 
       {:error, {status, message}} ->
         conn
@@ -83,10 +95,16 @@ defmodule CadetWeb.GradingController do
     summary("Get a list of all submissions with current user as the grader.")
 
     security([%{JWT: []}])
-
+    
     produces("application/json")
 
     parameters do
+      pageNo(
+        :query,
+        :integer,
+        "Specifies page number of results to retrieve",
+        required: true
+      )
       group(
         :query,
         :boolean,
@@ -95,7 +113,7 @@ defmodule CadetWeb.GradingController do
       )
     end
 
-    response(200, "OK", Schema.ref(:Submissions))
+    response(200, "OK", Schema.ref(:Submissions_overview))
     response(401, "Unauthorised")
   end
 
@@ -142,6 +160,20 @@ defmodule CadetWeb.GradingController do
 
   def swagger_definitions do
     %{
+      Submissions_overview:
+        swagger_schema do
+          properties do
+            submissions(Schema.ref(:Submission), "Array of submissions")
+            paginateDets(Schema.ref(:PaginateDets), "Details for browser pagination")
+          end
+        end,
+      PaginateDets:
+        swagger_schema do
+          properties do
+            pageNo(:integer, "Current page of submission entries", required: true)
+            maxPages(:integer, "Maximum number of pages of entries", required: true)
+          end
+        end,
       Submissions:
         swagger_schema do
           type(:array)

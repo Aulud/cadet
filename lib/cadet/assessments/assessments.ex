@@ -468,8 +468,8 @@ defmodule Cadet.Assessments do
   {:error, {:unauthorized, "User is not permitted to grade."}}
   """
   @spec all_submissions_by_grader(%User{}) ::
-          {:ok, [%Submission{}]} | {:error, {:unauthorized, String.t()}}
-  def all_submissions_by_grader(grader = %User{role: role}, group_only \\ false) do
+          {:ok, {[%Submission{}], {number(), number()}}} | {:error, {:unauthorized, String.t()}}
+  def all_submissions_by_grader(grader = %User{role: role}, page_no \\ 1, group_only \\ false) do
     submission_query =
       Submission
       |> join(
@@ -510,22 +510,48 @@ defmodule Cadet.Assessments do
           question_count: q_count.count,
           graded_count: a_count.count
       })
-
+    
     cond do
       role in @grading_roles ->
+<<<<<<< Updated upstream
         submissions = submissions_by_group(grader, submission_query)
         
         {:ok, build_submission_grading_status(submissions)}
+=======
+        modified_query = submissions_by_group(grader, submission_query)
+>>>>>>> Stashed changes
 
       role in @see_all_submissions_roles ->
-        submissions =
-          if group_only do
+        modified_query =
+          if !group_only do
             submissions_by_group(grader, submission_query)
           else
-            Repo.all(submission_query)
+            submission_query
           end
 
-        {:ok, build_submission_grading_status(submissions)}
+        # %{entries: entries, metadata: metadata} = Repo.paginate(
+        #   modified_query,
+        #   include_total_count: true,
+        #   cursor_fields: [:id],
+        #   limit: 4
+        # )
+        
+        max_pages =
+          modified_query
+          |> Repo.aggregate(:count, :id)
+        
+        max_pages = round(Float.ceil(max_pages / 4.0))
+
+        entries =   
+        modified_query
+        |> limit(4)
+        |> offset(^(4 * page_no - 4))
+        |> Repo.all()
+
+        {:ok, {
+          build_submission_grading_status(entries),
+          %{page_no: page_no, max_pages: max_pages}
+        }}
 
       true ->
         {:error, {:unauthorized, "User is not permitted to grade."}}
@@ -539,7 +565,11 @@ defmodule Cadet.Assessments do
        %{
         s
         | grading_status:
+<<<<<<< Updated upstream
           build_grading_status(s.assessment.type, s.question_count, s.graded_count)
+=======
+            build_grading_status(submission.assessment.type, submission.question_count, submission.graded_count)
+>>>>>>> Stashed changes
         }
     end)
   end
@@ -710,10 +740,11 @@ defmodule Cadet.Assessments do
 
     submission_query
     |> join(:inner, [s], st in subquery(students), s.student_id == st.id)
-    |> Repo.all()
+    # |> Repo.all()
   end
 
   defp submissions_by_group(%User{role: :admin}, submission_query) do
-    Repo.all(submission_query)
+    submission_query
+    # Repo.all(submission_query)
   end
 end
