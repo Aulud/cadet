@@ -28,7 +28,10 @@ defmodule CadetWeb.GradingView do
           coverImage: :cover_picture
         }),
       groupName: :group_name,
-      status: :status
+      status: :status,
+      gradingStatus: &(&1.grading_status || "none"),
+      questionCount: :question_count,
+      gradedCount: &((&1.graded_count || 0))
     })
   end
 
