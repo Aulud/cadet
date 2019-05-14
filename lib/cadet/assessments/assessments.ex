@@ -486,7 +486,19 @@ defmodule Cadet.Assessments do
         a in subquery(Query.all_assessments_with_max_xp_and_grade()),
         s.assessment_id == a.id
       )
-      |> select([s, x, st, g, a], %Submission{
+      |> join(
+        :inner,
+        [_, _, _, _, a],
+        q_count in subquery(Query.assessments_question_count()),
+        a.id == q_count.assessment_id
+      )
+      |> join(
+        :left,
+        [s],
+        a_count in subquery(Query.submissions_graded_count()),
+        s.id == a_count.submission_id
+      )
+      |> select([s, x, st, g, a, q_count, a_count], %Submission{
         s
         | grade: x.grade,
           adjustment: x.adjustment,
@@ -494,12 +506,16 @@ defmodule Cadet.Assessments do
           xp_adjustment: x.xp_adjustment,
           student: st,
           assessment: a,
-          group_name: g.name
+          group_name: g.name,
+          question_count: q_count.count,
+          graded_count: a_count.count
       })
 
     cond do
       role in @grading_roles ->
-        {:ok, submissions_by_group(grader, submission_query)}
+        submissions = submissions_by_group(grader, submission_query)
+        
+        {:ok, build_submission_grading_status(submissions)}
 
       role in @see_all_submissions_roles ->
         submissions =
@@ -509,7 +525,7 @@ defmodule Cadet.Assessments do
             Repo.all(submission_query)
           end
 
-        {:ok, submissions}
+        {:ok, build_submission_grading_status(submissions)}
 
       true ->
         {:error, {:unauthorized, "User is not permitted to grade."}}
