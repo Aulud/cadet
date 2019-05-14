@@ -516,6 +516,18 @@ defmodule Cadet.Assessments do
     end
   end
 
+  # Constructs grading status for each submission
+  defp build_submission_grading_status(submissions) do
+    submissions
+    |> Enum.map(fn s = %Submission{} ->
+       %{
+        s
+        | grading_status:
+          build_grading_status(s.assessment.type, s.question_count, s.graded_count)
+        }
+    end)
+  end
+
   @spec get_answers_in_submission(integer() | String.t(), %User{}) ::
           {:ok, [%Answer{}]} | {:error, {:unauthorized, String.t()}}
   def get_answers_in_submission(id, grader = %User{role: role}) when is_ecto_id(id) do
