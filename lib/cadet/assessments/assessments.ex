@@ -198,18 +198,25 @@ defmodule Cadet.Assessments do
         %{
           assessment
           | grading_status:
-              build_grading_status(assessment.question_count, assessment.graded_count)
+              build_grading_status(assessment.type, assessment.question_count, assessment.graded_count)
         }
       end)
 
     {:ok, assessments}
   end
 
-  defp build_grading_status(q_count, g_count) do
-    cond do
-      g_count < q_count -> :grading
-      g_count == q_count -> :graded
-      true -> :none
+  defp build_grading_status(a_type, q_count, g_count) do
+    case a_type do
+      type when type in [:mission, :sidequest] ->
+        cond do
+          g_count == :nil -> :ungraded
+          g_count < q_count -> :grading
+          g_count == q_count -> :graded
+          true -> :none
+        end
+      :path -> :none
+      :contest -> :none
+      _ -> :none
     end
   end
 
@@ -470,7 +477,7 @@ defmodule Cadet.Assessments do
         [s],
         x in subquery(Query.submissions_xp_and_grade()),
         s.id == x.submission_id
-      )
+      ) 
       |> join(:inner, [s], st in assoc(s, :student))
       |> join(:inner, [_, _, st], g in assoc(st, :group))
       |> join(
