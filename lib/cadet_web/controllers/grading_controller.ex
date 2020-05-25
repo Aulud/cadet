@@ -4,19 +4,36 @@ defmodule CadetWeb.GradingController do
 
   alias Cadet.Assessments
 
-  def index(conn, %{"pageNo" => page_no, "group" => group})
-      when is_ecto_id(page_no) and group in ["true", "false"] do
+  def index(conn, %{"options" => options}) do
+    # when is_ecto_id(options["pageNo"]) and options["group"] in ["true", "false"] do
     user = conn.assigns[:current_user]
-    
-    group = String.to_atom(group)
-    page_no = 
-    if String.to_integer(page_no) < 1 do
-      1
-    else
-      String.to_integer(page_no)
-    end
 
-    case Assessments.all_submissions_by_grader(user, page_no, group) do
+    group =
+      if options["group"] in ["true", "false"] do
+        String.to_atom(options["group"])
+      else
+        false
+      end
+
+    page_size = options["pageSize"]
+    page_no = if options["pageNo"] < 1, do: 1, else: options["pageNo"]
+    searchTags = List.first(options["searchTags"])
+    filterModel = options["filterModel"]["filterModel"]
+    sortModel = options["sortModel"]["sortModel"]
+
+    IO.inspect(searchTags)
+    IO.inspect(filterModel)
+    IO.inspect(sortModel)
+
+    case Assessments.all_submissions_by_grader(
+           user,
+           page_size,
+           page_no,
+           group,
+           searchTags,
+           filterModel,
+           sortModel
+         ) do
       {:ok, {submissions, metadata}} ->
         render(
           conn,
@@ -90,31 +107,28 @@ defmodule CadetWeb.GradingController do
   end
 
   swagger_path :index do
-    get("/grading")
+    post("/grading")
 
     summary("Get a list of all submissions with current user as the grader.")
 
     security([%{JWT: []}])
-    
+
+    consumes("application/json")
     produces("application/json")
 
     parameters do
-      pageNo(
-        :query,
-        :integer,
-        "Specifies page number of results to retrieve",
+      options(
+        :body,
+        Schema.ref(:PaginateOptions),
+        "Metadata for server-side pagination",
         required: true
-      )
-      group(
-        :query,
-        :boolean,
-        "Show only students in the grader's group when true",
-        required: false
       )
     end
 
     response(200, "OK", Schema.ref(:Submissions_overview))
+    response(400, "Invalid or missing parameter(s) or malformed options JSON")
     response(401, "Unauthorised")
+    response(500, "Internal server error")
   end
 
   swagger_path :show do
@@ -160,6 +174,54 @@ defmodule CadetWeb.GradingController do
 
   def swagger_definitions do
     %{
+      PaginateOptions:
+        swagger_schema do
+          properties do
+            options(
+              Schema.new do
+                properties do
+                  filterModel(
+                    :string,
+                    "A JSON object representing the state of filters applied to the grid",
+                    required: true
+                  )
+
+                  group(
+                    :boolean,
+                    "Show only students in the grader's group when true",
+                    required: true
+                  )
+
+                  pageSize(
+                    :integer,
+                    "Specifies number of results to retrieve",
+                    required: true
+                  )
+
+                  pageNo(
+                    :integer,
+                    "Specifies page number of results to retrieve",
+                    required: true
+                  )
+
+                  searchTags(
+                    :string,
+                    "An array of strings, each representing a search term",
+                    required: true
+                  )
+
+                  sortModel(
+                    :string,
+                    "A JSON object representing the sorting state of the grid",
+                    required: true
+                  )
+                end
+              end
+            )
+          end
+
+          required(:options)
+        end,
       Submissions_overview:
         swagger_schema do
           properties do

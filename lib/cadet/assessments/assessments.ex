@@ -198,7 +198,11 @@ defmodule Cadet.Assessments do
         %{
           assessment
           | grading_status:
-              build_grading_status(assessment.type, assessment.question_count, assessment.graded_count)
+              build_grading_status(
+                assessment.type,
+                assessment.question_count,
+                assessment.graded_count
+              )
         }
       end)
 
@@ -209,14 +213,20 @@ defmodule Cadet.Assessments do
     case a_type do
       type when type in [:mission, :sidequest] ->
         cond do
-          g_count == :nil -> :ungraded
+          g_count == nil -> :ungraded
           g_count < q_count -> :grading
           g_count == q_count -> :graded
           true -> :none
         end
-      :path -> :none
-      :contest -> :none
-      _ -> :none
+
+      :path ->
+        :none
+
+      :contest ->
+        :none
+
+      _ ->
+        :none
     end
   end
 
@@ -467,9 +477,17 @@ defmodule Cadet.Assessments do
   The return value is {:ok, submissions} if no errors else its 
   {:error, {:unauthorized, "User is not permitted to grade."}}
   """
-  @spec all_submissions_by_grader(%User{}) ::
+  @spec all_submissions_by_grader(%User{}, integer(), integer(), boolean(), list(), map(), list()) ::
           {:ok, {[%Submission{}], {number(), number()}}} | {:error, {:unauthorized, String.t()}}
-  def all_submissions_by_grader(grader = %User{role: role}, page_no \\ 1, group_only \\ false) do
+  def all_submissions_by_grader(
+        grader = %User{role: role},
+        page_size \\ 20,
+        page_no \\ 1,
+        group_only \\ false,
+        search_tags,
+        filter_model,
+        sort_model
+      ) do
     submission_query =
       Submission
       |> join(
@@ -477,7 +495,7 @@ defmodule Cadet.Assessments do
         [s],
         x in subquery(Query.submissions_xp_and_grade()),
         s.id == x.submission_id
-      ) 
+      )
       |> join(:inner, [s], st in assoc(s, :student))
       |> join(:inner, [_, _, st], g in assoc(st, :group))
       |> join(
@@ -508,50 +526,75 @@ defmodule Cadet.Assessments do
           assessment: a,
           group_name: g.name,
           question_count: q_count.count,
-          graded_count: a_count.count
+          graded_count: a_count.count,
+          # Build a temporary grading status to sort and filter with
+          grading_status:
+            fragment(
+              "CASE
+            WHEN ? = 'path' OR ? = 'contest' THEN '4_none'
+            WHEN ? = 'mission' OR ? = 'sidequest' THEN
+              CASE
+                WHEN ? IS NULL THEN '1_ungraded'
+                WHEN ? < ? THEN '2_grading'
+                WHEN ? = ? THEN '3_graded'
+                ELSE '4_none'
+              END
+            ELSE '4_none'
+            END",
+              a.type,
+              a.type,
+              a.type,
+              a.type,
+              a_count.count,
+              a_count.count,
+              q_count.count,
+              a_count.count,
+              q_count.count
+            )
       })
-    
+
+    # Filter, search then sort in this order
+    filtered_query = filter_entries(submission_query, filter_model)
+    searched_query = search_entries(filtered_query, search_tags)
+    sorted_query = sort_entries(searched_query, sort_model)
+
     cond do
       role in @grading_roles ->
-<<<<<<< Updated upstream
         submissions = submissions_by_group(grader, submission_query)
-        
+
         {:ok, build_submission_grading_status(submissions)}
-=======
-        modified_query = submissions_by_group(grader, submission_query)
->>>>>>> Stashed changes
 
       role in @see_all_submissions_roles ->
         modified_query =
           if !group_only do
-            submissions_by_group(grader, submission_query)
+            submissions_by_group(grader, sorted_query)
           else
-            submission_query
+            sorted_query
           end
 
-        # %{entries: entries, metadata: metadata} = Repo.paginate(
-        #   modified_query,
-        #   include_total_count: true,
-        #   cursor_fields: [:id],
-        #   limit: 4
-        # )
-        
         max_pages =
           modified_query
           |> Repo.aggregate(:count, :id)
-        
-        max_pages = round(Float.ceil(max_pages / 4.0))
 
-        entries =   
-        modified_query
-        |> limit(4)
-        |> offset(^(4 * page_no - 4))
-        |> Repo.all()
+        max_pages = round(Float.ceil(max_pages / page_size))
+        offset_amt = page_size * (page_no - 1)
 
-        {:ok, {
-          build_submission_grading_status(entries),
-          %{page_no: page_no, max_pages: max_pages}
-        }}
+        entries =
+          modified_query
+          |> limit(^page_size)
+          |> offset(^offset_amt)
+          |> Repo.all()
+
+        IO.inspect(search_tags)
+        IO.inspect(filter_model)
+        IO.inspect(sort_model)
+
+        # Rebuild correct grading status for display
+        {:ok,
+         {
+           build_submission_grading_status(entries),
+           %{page_no: page_no, max_pages: max_pages}
+         }}
 
       true ->
         {:error, {:unauthorized, "User is not permitted to grade."}}
@@ -562,15 +605,11 @@ defmodule Cadet.Assessments do
   defp build_submission_grading_status(submissions) do
     submissions
     |> Enum.map(fn s = %Submission{} ->
-       %{
+      %{
         s
         | grading_status:
-<<<<<<< Updated upstream
-          build_grading_status(s.assessment.type, s.question_count, s.graded_count)
-=======
-            build_grading_status(submission.assessment.type, submission.question_count, submission.graded_count)
->>>>>>> Stashed changes
-        }
+            build_grading_status(s.assessment.type, s.question_count, s.graded_count)
+      }
     end)
   end
 
@@ -740,11 +779,125 @@ defmodule Cadet.Assessments do
 
     submission_query
     |> join(:inner, [s], st in subquery(students), s.student_id == st.id)
-    # |> Repo.all()
   end
 
   defp submissions_by_group(%User{role: :admin}, submission_query) do
     submission_query
-    # Repo.all(submission_query)
+  end
+
+  # Given a list of maps (each map representing a sort applied on a column),
+  # Sorts the entries in the order each sort was applied in the specified direction
+  # Returns the augmented query that retrieves the sorted submissions
+  defp sort_entries(raw_entries, sort_model) do
+    # Map sort direction string to atoms
+    dir_map = %{"asc" => :asc, "desc" => :desc}
+
+    # Applies sorting to columns using predefined mappings and given sort order
+    # col here represents a map() in a list
+    sorted_entries =
+      Enum.reduce(
+        sort_model,
+        raw_entries,
+        fn col, acc ->
+          case col["colId"] do
+            "assessmentName" ->
+              acc |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], s4.title})
+
+            "assessmentCategory" ->
+              acc |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], s4.type})
+
+            "studentName" ->
+              acc |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], u2.name})
+
+            "gradeDisplay" ->
+              acc |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], s1.grade})
+
+            "xpDisplay" ->
+              acc |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], s1.xp})
+
+            "groupName" ->
+              acc |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], g3.name})
+
+            # Sort by 39th ordinal column in the JOINED table (temporary grading status)
+            "gradingStatus" ->
+              acc
+              |> order_by([s0, s1, u2, g3, s4, s5, s6], {^dir_map[col["sort"]], fragment("39")})
+
+            _ ->
+              acc
+          end
+        end
+      )
+
+    sorted_entries
+  end
+
+  # Text-based filters for other columns are disabled
+  # Parses numerical filters applied to the XP and grade columns
+  # Given a map of maps (each map representing a filter applied to a column - key),
+  # Returns the augmented query that retrieves submissions that passes all filters
+  defp filter_entries(raw_entries, filter_model) do
+    # Column mappings
+    col_map = %{"gradeDisplay" => :grade, "xpDisplay" => :xp}
+
+    filtered_entries =
+      Enum.reduce(
+        filter_model,
+        raw_entries,
+        fn {key, value}, acc ->
+          case value["type"] do
+            "equals" ->
+              acc |> where([_, s1], field(s1, ^col_map[key]) == ^value["filter"])
+
+            "notEqual" ->
+              acc |> where([_, s1], field(s1, ^col_map[key]) != ^value["filter"])
+
+            "lessThanOrEqual" ->
+              acc |> where([_, s1], field(s1, ^col_map[key]) <= ^value["filter"])
+
+            "greaterThanOrEqual" ->
+              acc |> where([_, s1], field(s1, ^col_map[key]) >= ^value["filter"])
+
+            "inRange" ->
+              acc
+              |> where(
+                [_, s1],
+                field(s1, ^col_map[key]) >= ^value["filter"] and
+                  field(s1, ^col_map[key]) <= ^value["filterTo"]
+              )
+
+            _ ->
+              acc
+          end
+        end
+      )
+
+    filtered_entries
+  end
+
+  # Given a list of search terms (from the search bar),
+  # searches for each term in four different fields:
+  #   assessment name (s4.title), assessment category (s4.type cast to text),
+  #   student name (u2.name), group name (g3.name)
+  # Returns the augmented query that
+  #   retrieves all submissions where every search term is found in at least one field
+  defp search_entries(raw_entries, search_tags) do
+    subset_entries =
+      Enum.reduce(
+        search_tags,
+        raw_entries,
+        fn term, acc ->
+          acc
+          |> where(
+            [s0, s1, u2, g3, s4, s5, s6],
+            ilike(s4.title, ^"%#{term}%") or
+              fragment("s4.\"type\"::text ILIKE ?", ^("%" <> term <> "%")) or
+              ilike(u2.name, ^"%#{term}%") or
+              ilike(g3.name, ^"%#{term}%")
+          )
+        end
+      )
+
+    subset_entries
   end
 end
