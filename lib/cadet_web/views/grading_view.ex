@@ -1,8 +1,16 @@
 defmodule CadetWeb.GradingView do
   use CadetWeb, :view
 
-  def render("index.json", %{submissions: submissions}) do
-    render_many(submissions, CadetWeb.GradingView, "submission.json", as: :submission)
+  def render("index.json", %{submissions: submissions, metadata: metadata}) do
+    entries = render_many(submissions, CadetWeb.GradingView, "submission.json", as: :submission)
+
+    %{
+      submissions: entries,
+      paginateDets: %{
+        pageNo: min(metadata.page_no, metadata.max_pages),
+        maxPages: metadata.max_pages
+      }
+    }
   end
 
   def render("show.json", %{answers: answers}) do
@@ -31,7 +39,7 @@ defmodule CadetWeb.GradingView do
       status: :status,
       gradingStatus: &(&1.grading_status || "none"),
       questionCount: :question_count,
-      gradedCount: &((&1.graded_count || 0))
+      gradedCount: &(&1.graded_count || 0)
     })
   end
 
